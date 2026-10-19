@@ -5,7 +5,7 @@
 The command exists, is bound in `ArchicadWindows.cui`, and prints an
 explanation; it does not modify the drawing.
 
-Why it cannot be done correctly with the public API (OCS commit 29bd657, API v13):
+Why it cannot be done correctly with the public API (OCS v2026.42, API v10):
 
 1. **No native command.** `ROTATE` (RotateCommand) has only the `Reference`
    option; it always transforms the originals (`CmdResult::TransformSelected`).

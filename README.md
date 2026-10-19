@@ -1,6 +1,6 @@
 # Archicad Shortcuts for Open CAD Studio
 
-External, out-of-process plugin (`cdylib`, `ocs_plugin_api` API v13) that adds
+External, out-of-process plugin (`cdylib`, `ocs_plugin_api` API v10) that adds
 Archicad (Windows) style editing commands to Open CAD Studio, plus a
 `ArchicadWindows.cui` shortcut file. The host is not modified.
 
@@ -15,7 +15,7 @@ Archicad (Windows) style editing commands to Open CAD Studio, plus a
 
 ## Requirements
 
-- Open CAD Studio with plugin API v13, built with the same `rustc` as this
+- Open CAD Studio with plugin API v10 (official release v2026.42, rustc 1.99.1), built with the same `rustc` as this
   plugin (the host checks `rustc_version` / `acadrust_source` in `plugin.toml`).
 - Script commands enabled once at the OCS command line: `SCRIPTCOMMANDS 1`
   (the plugin drives native commands through `HostApi::execute_command`, which

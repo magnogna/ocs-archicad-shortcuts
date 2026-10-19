@@ -13,9 +13,9 @@ crate-type = ["cdylib"]
 [dependencies]
 # Stable plugin contract (host feature = HostApi / BuiltinPlugin / export_plugin!).
 # Pinned to the host commit this plugin was written and reviewed against
-# (API v13). Its own `acadrust` pin (rev 0dcd5aa) is the host's codec pin, so
+# (API v10, release v2026.42). Its own `acadrust` pin (rev 5d4f11a) is the host's codec pin, so
 # Cargo.lock resolves the same opencadcodec the host was built with.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "29bd65752523926a32ae82d430417e1541a3f007", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "b6fbac39ffc74398ba5d283ce2bc1dc07a8fd8f0", features = ["host"] }
 
 [profile.release]
 strip = true

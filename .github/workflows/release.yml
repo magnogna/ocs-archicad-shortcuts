@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  RUST_TOOLCHAIN: stable
+  RUST_TOOLCHAIN: "1.99.1"  # rustc of official OCS v2026.42
 
 jobs:
   build:
