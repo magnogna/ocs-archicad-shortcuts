@@ -1,0 +1,60 @@
+name: release
+
+# Adapted from OpenCADStudio docs/plugin-template. Builds the cdylib per
+# platform and attaches it plus a filled plugin.toml and ArchicadWindows.cui
+# to a GitHub Release on a v* tag.
+#
+# IMPORTANT (API v4+): the host refuses a plugin whose rustc_version differs
+# from its own build compiler byte-for-byte. Set RUST_TOOLCHAIN to the exact
+# version of the OCS release you target before tagging.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ext: so
+            asset: opencad.archicad_shortcuts-linux-x86_64.so
+          - os: windows-latest
+            ext: dll
+            asset: opencad.archicad_shortcuts-windows-x86_64.dll
+          - os: macos-latest
+            ext: dylib
+            asset: opencad.archicad_shortcuts-macos-aarch64.dylib
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - run: cargo test
+      - run: cargo build --release
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
+          acadrust_source=$(grep -A2 '^name = "acadrust"' Cargo.lock | grep '^source' | head -1 | sed 's/^source = "//;s/"$//')
+          test -n "$acadrust_source"
+          sed \
+            -e "s|__RUSTC_VERSION__|$(rustc --version)|" \
+            -e "s|__ACADRUST_SOURCE__|$acadrust_source|" \
+            plugin.toml > dist/plugin.toml
+          cp ArchicadWindows.cui dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.asset }}
+            dist/plugin.toml
+            dist/ArchicadWindows.cui

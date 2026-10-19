@@ -1,0 +1,21 @@
+[package]
+name = "ocs-archicad-shortcuts"
+version = "0.1.0"
+edition = "2021"
+description = "Archicad (Windows) style keyboard shortcuts for Open CAD Studio, driving the native MOVE/COPY/ROTATE/MIRROR commands."
+license = "GPL-3.0-only"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Stable plugin contract (host feature = HostApi / BuiltinPlugin / export_plugin!).
+# Pinned to the host commit this plugin was written and reviewed against
+# (API v13). Its own `acadrust` pin (rev 0dcd5aa) is the host's codec pin, so
+# Cargo.lock resolves the same opencadcodec the host was built with.
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "29bd65752523926a32ae82d430417e1541a3f007", features = ["host"] }
+
+[profile.release]
+strip = true

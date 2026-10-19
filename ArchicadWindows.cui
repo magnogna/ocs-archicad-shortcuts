@@ -1,0 +1,16 @@
+# Archicad (Windows) style shortcuts for Open CAD Studio.
+# Requires the "Archicad Shortcuts" plugin (opencad.archicad_shortcuts).
+#
+# Apply manually from the OCS command line:
+#   CUIIMPORT <path-to>/ArchicadWindows.cui
+#
+# Format: KEY COMMAND   (lines starting with # are ignored)
+
+CTRL+D          AC_MOVE
+CTRL+SHIFT+D    AC_COPYMOVE
+CTRL+E          AC_ROTATE
+# Not implemented yet (public API limit, see LIMITATIONS.md); the command
+# prints an explanation instead of acting.
+CTRL+SHIFT+E    AC_ROTATECOPY
+CTRL+M          AC_MIRROR
+CTRL+SHIFT+M    AC_MIRRORCOPY

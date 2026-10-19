@@ -1,0 +1,17 @@
+[plugin]
+id = "opencad.archicad_shortcuts"
+name = "Archicad Shortcuts"
+version = "0.1.0"
+description = "Archicad (Windows) style shortcuts: AC_MOVE, AC_COPYMOVE, AC_ROTATE, AC_MIRROR, AC_MIRRORCOPY. Ships ArchicadWindows.cui for CUIIMPORT."
+author = "Gabriele Casagrande"
+license = "GPL-3.0-only"
+repository = "magnogna/ocs-archicad-shortcuts"
+
+[opencad]
+api_version = 13
+# release.yml fills both placeholders from the compiler and Cargo.lock.
+rustc_version = "__RUSTC_VERSION__"
+acadrust_source = "__ACADRUST_SOURCE__"
+ribbon_order = 70
+command_prefixes = ["AC_"]
+xdata_apps = []
