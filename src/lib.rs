@@ -7,7 +7,10 @@
 //! the host once the user has answered. The plugin contains no geometry, no
 //! selection system and no undo logic: the native command owns all of it.
 
-use ocs_plugin_api::host::{BuiltinPlugin, HostApi};
+use ocs_plugin_api::host::{BuiltinPlugin, HostApi, HostNotification, PluginRequestSender};
+use ocs_plugin_api::ipc::protocol::{PluginRequest, PluginResponse};
+use ocs_plugin_api::host::Handle;
+use std::sync::{Arc, Mutex};
 use ocs_plugin_api::manifest::{ApiVersion, PluginManifest};
 use ocs_plugin_api::ribbon::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
 
@@ -15,7 +18,7 @@ use ocs_plugin_api::ribbon::{CadModule, IconKind, ModuleEvent, RibbonGroup, Ribb
 static MANIFEST: PluginManifest = PluginManifest {
     id: "opencad.archicad_shortcuts",
     name: "Archicad Shortcuts",
-    version: "0.2.0",
+    version: "0.2.1",
     description: "Archicad (Windows) style shortcuts driving native OCS commands.",
     api_version: ApiVersion::CURRENT,
     ribbon_order: 70,
@@ -31,18 +34,24 @@ pub enum Action {
     /// Start a native command, then accept its default with Enter.
     NativeThenEnter(&'static str),
     /// TEMPORARY chain of native commands (two undo steps). See LIMITATIONS.md.
-    TemporaryChain(&'static str),
+    /// (first line, follow-up line): the follow-up starts only after the
+    /// first native command has ended (see `PendingChain`).
+    TemporaryChain(&'static str, &'static str),
 }
 
 /// TEMPORARY (see LIMITATIONS.md, "Temporary command chains"): OCS has no
 /// native rotate-a-copy. Chain: copy -> move -> rotate. Native COPY places one
 /// copy (the host selects it), then native ROTATE on that selection.
 /// Produces TWO undo steps. Remove once the host offers an atomic copy+transform.
-pub const ROTATECOPY_CHAIN: &str = "COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE";
+/// The host feeds queued tokens only to the command still running, so a
+/// second verb in the same line is dropped when COPY ends: the follow-up is
+/// sent separately once the host reports that COPY has finished.
+pub const COPY_STEP: &str = "COPY PAUSE PAUSE ENTER";
+pub const ROTATECOPY_FOLLOWUP: &str = "ROTATE PAUSE PAUSE";
 /// TEMPORARY: copy -> move -> mirror. Native COPY places one copy (the host
 /// selects it), then native MIRROR erases its source, i.e. mirrors the copy
 /// in place. Originals stay. Produces TWO undo steps.
-pub const MIRRORCOPY_CHAIN: &str = "COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y";
+pub const MIRRORCOPY_FOLLOWUP: &str = "MIRROR PAUSE PAUSE Y";
 pub const TEMPORARY_NOTICE: &str = "Temporary implementation: this command creates two undo \
 steps (copy, then transform). Undo twice to revert it completely.";
 
@@ -59,13 +68,13 @@ pub fn action_for(cmd: &str) -> Option<Action> {
         // Native MIRROR: two axis points, then "Erase source objects?" Yes.
         "AC_MIRROR" => Action::Native("MIRROR PAUSE PAUSE Y"),
         // TEMPORARY: copy -> move -> mirror (two undo steps).
-        "AC_MIRRORCOPY" => Action::TemporaryChain(MIRRORCOPY_CHAIN),
+        "AC_MIRRORCOPY" => Action::TemporaryChain(COPY_STEP, MIRRORCOPY_FOLLOWUP),
         // Accept GROUP's host-generated name, without naming the group ENTER.
         "AC_GROUP" => Action::NativeThenEnter("GROUP"),
         // UNGROUP dissolves membership; EXPLODE changes entity geometry.
         "AC_UNGROUP" => Action::Native("UNGROUP"),
         // TEMPORARY: copy -> move -> rotate (two undo steps).
-        "AC_ROTATECOPY" => Action::TemporaryChain(ROTATECOPY_CHAIN),
+        "AC_ROTATECOPY" => Action::TemporaryChain(COPY_STEP, ROTATECOPY_FOLLOWUP),
         _ => return None,
     })
 }
@@ -108,7 +117,67 @@ impl CadModule for ArchicadModule {
     }
 }
 
-struct ArchicadPlugin;
+/// TEMPORARY chain bookkeeping: waits for COPY to start and then end, and
+/// only then sends the follow-up, if COPY really produced new copies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingChain {
+    pub followup: &'static str,
+    pub originals: Vec<Handle>,
+    pub started: bool,
+}
+
+/// Feed one "active command" change. Returns true when the first command has
+/// ended and the follow-up should be evaluated.
+pub fn chain_step(pending: &mut PendingChain, command: Option<&str>) -> bool {
+    match command {
+        Some(_) => {
+            pending.started = true;
+            false
+        }
+        None => pending.started,
+    }
+}
+
+/// COPY selects the copies it placed. An empty selection, or the original
+/// one, means it was cancelled: then no follow-up runs.
+pub fn copies_were_made(originals: &[Handle], after: &[Handle]) -> bool {
+    !after.is_empty() && !after.iter().all(|h| originals.contains(h))
+}
+
+#[derive(Default)]
+struct ArchicadPlugin {
+    sender: Mutex<Option<Arc<dyn PluginRequestSender>>>,
+    pending: Mutex<Option<PendingChain>>,
+}
+
+impl ArchicadPlugin {
+    fn run_followup(&self, chain: PendingChain) {
+        let Some(sender) = self.sender.lock().unwrap().clone() else {
+            return;
+        };
+        // Off the runner thread: the request waits for the host's reply.
+        std::thread::spawn(move || {
+            let after = match sender.request(PluginRequest::GetSelection) {
+                Ok(PluginResponse::Selection(h)) | Ok(PluginResponse::Handles(h)) => h,
+                _ => return,
+            };
+            if !copies_were_made(&chain.originals, &after) {
+                return;
+            }
+            let _ = sender.request(PluginRequest::ExecuteCommand(chain.followup.to_string()));
+        });
+    }
+}
+
+struct SenderBox(Box<dyn PluginRequestSender>);
+impl PluginRequestSender for SenderBox {
+    fn request(
+        &self,
+        req: PluginRequest,
+    ) -> Result<PluginResponse, ocs_plugin_api::host::PluginRequestError> {
+        self.0.request(req)
+    }
+}
 
 impl BuiltinPlugin for ArchicadPlugin {
     fn manifest(&self) -> &'static PluginManifest {
@@ -117,36 +186,60 @@ impl BuiltinPlugin for ArchicadPlugin {
     fn ribbon(&self) -> Box<dyn CadModule> {
         Box::new(ArchicadModule)
     }
+    fn on_load(&mut self, host: &mut dyn HostApi) {
+        *self.sender.lock().unwrap() =
+            host.plugin_request_sender().map(|s| Arc::new(SenderBox(s)) as Arc<dyn PluginRequestSender>);
+    }
+    fn on_notification(&mut self, _command_id: Option<u64>, notification: HostNotification) {
+        let HostNotification::CommandStateChanged { command, .. } = notification else {
+            return;
+        };
+        let ready = {
+            let mut guard = self.pending.lock().unwrap();
+            let done = guard.as_mut().is_some_and(|p| chain_step(p, command.as_deref()));
+            if done { guard.take() } else { None }
+        };
+        if let Some(chain) = ready {
+            self.run_followup(chain);
+        }
+    }
     fn dispatch(&self, host: &mut dyn HostApi, cmd: &str) -> bool {
         let Some(action) = action_for(cmd) else {
             return false;
         };
-        match action {
-            Action::Native(line) | Action::NativeThenEnter(line) | Action::TemporaryChain(line) => {
-                // Use the host's current selection; never build our own.
-                if host.selection().is_empty() {
-                    host.push_info("Select objects first, then run the command again.");
-                    return true;
-                }
-                if !host.execute_command(line) {
-                    host.push_error(
-                        "The host refused to run the command. Script commands may be off: \
-                         enable them with SCRIPTCOMMANDS 1.",
-                    );
-                } else if matches!(action, Action::NativeThenEnter(_))
-                    && !host.execute_command("ENTER")
-                {
-                    host.push_error("The host could not accept the default group name.");
-                } else if matches!(action, Action::TemporaryChain(_)) {
-                    host.push_info(TEMPORARY_NOTICE);
-                }
+        // Use the host's current selection; never build our own.
+        let originals = host.selection();
+        if originals.is_empty() {
+            host.push_info("Select objects first, then run the command again.");
+            return true;
+        }
+        let line = match action {
+            Action::Native(l) | Action::NativeThenEnter(l) | Action::TemporaryChain(l, _) => l,
+        };
+        if let Action::TemporaryChain(_, followup) = action {
+            if self.sender.lock().unwrap().is_none() {
+                host.push_error("This host does not allow the plugin to chain commands.");
+                return true;
             }
+            *self.pending.lock().unwrap() =
+                Some(PendingChain { followup, originals: originals.clone(), started: false });
+        }
+        if !host.execute_command(line) {
+            *self.pending.lock().unwrap() = None;
+            host.push_error(
+                "The host refused to run the command. Script commands may be off: \
+                 enable them with SCRIPTCOMMANDS 1.",
+            );
+        } else if matches!(action, Action::NativeThenEnter(_)) && !host.execute_command("ENTER") {
+            host.push_error("The host could not accept the default group name.");
+        } else if matches!(action, Action::TemporaryChain(..)) {
+            host.push_info(TEMPORARY_NOTICE);
         }
         true
     }
 }
 
-ocs_plugin_api::export_plugin!(ArchicadPlugin);
+ocs_plugin_api::export_plugin!(ArchicadPlugin::default());
 
 #[cfg(test)]
 mod tests {
@@ -174,7 +267,7 @@ mod tests {
         // copy's source (the copy itself), never the originals.
         assert_eq!(
             action_for("AC_MIRRORCOPY"),
-            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y"))
+            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER", "MIRROR PAUSE PAUSE Y"))
         );
     }
     #[test]
@@ -182,7 +275,7 @@ mod tests {
         // copy -> move -> rotate: single native copy, then rotate the selected copy.
         assert_eq!(
             action_for("AC_ROTATECOPY"),
-            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE"))
+            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER", "ROTATE PAUSE PAUSE"))
         );
     }
     #[test]
@@ -243,5 +336,21 @@ mod tests {
     #[test]
     fn ctrl_shift_g_ungroups() {
         assert_eq!(binding("CTRL+SHIFT+G"), Some("AC_UNGROUP"));
+    }
+
+    #[test]
+    fn followup_waits_for_copy_to_start_and_end() {
+        let mut p = PendingChain { followup: "ROTATE PAUSE PAUSE", originals: vec![], started: false };
+        assert!(!chain_step(&mut p, None));
+        assert!(!chain_step(&mut p, Some("COPY")));
+        assert!(chain_step(&mut p, None));
+    }
+
+    #[test]
+    fn followup_skipped_when_copy_cancelled() {
+        let a = Handle::new(1);
+        assert!(!copies_were_made(&[a], &[a]));
+        assert!(!copies_were_made(&[a], &[]));
+        assert!(copies_were_made(&[a], &[Handle::new(2)]));
     }
 }

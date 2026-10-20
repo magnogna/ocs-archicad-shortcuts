@@ -1,7 +1,7 @@
 [plugin]
 id = "opencad.archicad_shortcuts"
 name = "Archicad Shortcuts"
-version = "0.2.0"
+version = "0.2.1"
 description = "Archicad (Windows) style shortcuts: AC_MOVE, AC_COPYMOVE, AC_ROTATE, AC_ROTATECOPY, AC_MIRROR, AC_MIRRORCOPY, AC_GROUP, AC_UNGROUP. Ships ArchicadWindows.cui for CUIIMPORT."
 author = "Gabriele Casagrande"
 license = "GPL-3.0-only"
