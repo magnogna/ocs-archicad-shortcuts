@@ -28,6 +28,8 @@ static MANIFEST: PluginManifest = PluginManifest {
 pub enum Action {
     /// Run this native command line.
     Native(&'static str),
+    /// Start a native command, then accept its default with Enter.
+    NativeThenEnter(&'static str),
     /// Deliberately not implemented; the message explains why.
     Unsupported(&'static str),
 }
@@ -51,6 +53,10 @@ pub fn action_for(cmd: &str) -> Option<Action> {
         "AC_MIRROR" => Action::Native("MIRROR PAUSE PAUSE Y"),
         // Native MIRROR: two axis points, then "Erase source objects?" No.
         "AC_MIRRORCOPY" => Action::Native("MIRROR PAUSE PAUSE N"),
+        // Accept GROUP's host-generated name, without naming the group ENTER.
+        "AC_GROUP" => Action::NativeThenEnter("GROUP"),
+        // UNGROUP dissolves membership; EXPLODE changes entity geometry.
+        "AC_UNGROUP" => Action::Native("UNGROUP"),
         "AC_ROTATECOPY" => Action::Unsupported(ROTATECOPY_UNSUPPORTED),
         _ => return None,
     })
@@ -86,6 +92,8 @@ impl CadModule for ArchicadModule {
                     tool("AC_ROTATECOPY", "Rotate Copy", "⟳"),
                     tool("AC_MIRROR", "Mirror", "⇋"),
                     tool("AC_MIRRORCOPY", "Mirror Copy", "⇌"),
+                    tool("AC_GROUP", "Group", "▣"),
+                    tool("AC_UNGROUP", "Ungroup", "▦"),
                 ],
             }]
         })
@@ -107,7 +115,7 @@ impl BuiltinPlugin for ArchicadPlugin {
         };
         match action {
             Action::Unsupported(msg) => host.push_error(msg),
-            Action::Native(line) => {
+            Action::Native(line) | Action::NativeThenEnter(line) => {
                 // Use the host's current selection; never build our own.
                 if host.selection().is_empty() {
                     host.push_info("Select objects first, then run the command again.");
@@ -118,6 +126,10 @@ impl BuiltinPlugin for ArchicadPlugin {
                         "The host refused to run the command. Script commands may be off: \
                          enable them with SCRIPTCOMMANDS 1.",
                     );
+                } else if matches!(action, Action::NativeThenEnter(_))
+                    && !host.execute_command("ENTER")
+                {
+                    host.push_error("The host could not accept the default group name.");
                 }
             }
         }
@@ -156,6 +168,14 @@ mod tests {
         assert!(matches!(action_for("AC_ROTATECOPY"), Some(Action::Unsupported(_))));
     }
     #[test]
+    fn group_uses_native_group_and_accepts_default_name() {
+        assert_eq!(action_for("AC_GROUP"), Some(Action::NativeThenEnter("GROUP")));
+    }
+    #[test]
+    fn ungroup_dissolves_membership_without_exploding_geometry() {
+        assert_eq!(action_for("AC_UNGROUP"), Some(Action::Native("UNGROUP")));
+    }
+    #[test]
     fn foreign_commands_are_not_claimed() {
         assert_eq!(action_for("MOVE"), None);
         assert_eq!(action_for("AC_UNKNOWN"), None);
@@ -177,10 +197,33 @@ mod tests {
             .map(|l| l.split_once(char::is_whitespace).unwrap())
             .map(|(k, v)| (k, v.trim()))
             .collect();
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 8);
         for (k, v) in rows {
             assert!(k.starts_with("CTRL+"), "{k}");
             assert!(action_for(v).is_some(), "{v}");
         }
+    }
+    fn binding(key: &str) -> Option<&'static str> {
+        include_str!("../ArchicadWindows.cui").lines()
+            .filter(|line| !line.trim().starts_with('#'))
+            .filter_map(|line| line.split_once(char::is_whitespace))
+            .find(|(bound, _)| *bound == key)
+            .map(|(_, command)| command.trim())
+    }
+    #[test]
+    fn ctrl_m_routes_to_mirror_erasing_originals() {
+        assert_eq!(binding("CTRL+M"), Some("AC_MIRROR"));
+    }
+    #[test]
+    fn ctrl_shift_m_routes_to_plugin_not_unknown_mirrorcopy() {
+        assert_eq!(binding("CTRL+SHIFT+M"), Some("AC_MIRRORCOPY"));
+    }
+    #[test]
+    fn ctrl_g_groups() {
+        assert_eq!(binding("CTRL+G"), Some("AC_GROUP"));
+    }
+    #[test]
+    fn ctrl_shift_g_ungroups() {
+        assert_eq!(binding("CTRL+SHIFT+G"), Some("AC_UNGROUP"));
     }
 }
