@@ -1,6 +1,6 @@
 [package]
 name = "ocs-archicad-shortcuts"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Archicad (Windows) style keyboard shortcuts for Open CAD Studio, driving the native MOVE/COPY/ROTATE/MIRROR commands."
 license = "GPL-3.0-only"

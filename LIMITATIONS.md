@@ -1,47 +1,38 @@
 # Limitations
 
-## AC_ROTATECOPY (Ctrl+Shift+E) — not implemented
+## Temporary command chains: AC_ROTATECOPY and AC_MIRRORCOPY
 
-The command exists, is bound in `ArchicadWindows.cui`, and prints an
-explanation; it does not modify the drawing.
+**These two commands are TEMPORARY.** They break the "one undo per operation"
+rule, agreed as an interim solution. Remove them (see `TemporaryChain` in
+`src/lib.rs`) once the host offers one of the options in
+[docs/host-proposal.md](docs/host-proposal.md).
 
-Why it cannot be done correctly with the public API (OCS v2026.42, API v10):
+| Command | Chain (native commands only) | Result |
+|---|---|---|
+| `AC_ROTATECOPY` | `COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE` | original stays, copy moved then rotated |
+| `AC_MIRRORCOPY` | `COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y` | original stays, copy moved then mirrored in place |
 
-1. **No native command.** `ROTATE` (RotateCommand) has only the `Reference`
-   option; it always transforms the originals (`CmdResult::TransformSelected`).
-   There is no `ROTATECOPY` and no Copy option.
-2. **No public transform.** `EntityTransform::Rotate` and
-   `Transformable::apply_transform` are host internals (`src/command`,
-   `src/entities`), not part of `ocs_plugin_api`. Cloning entities from
-   `document()` and rotating them in the plugin would duplicate host geometry
-   per entity kind (arcs, text, dimensions, blocks, …) — rejected by design.
-3. **Command chaining is not atomic.** e.g. `COPY` with zero displacement then
-   `ROTATE` on the new entities: two undo steps; the plugin would have to
-   change the user's selection to the copies and regain control after the
-   user's input (execute_command returns before the user answers), so there
-   is no reliable point to do it.
+Why it works (host source): multiple-mode COPY returns `CopySelected`, whose
+handler deselects the originals and selects the new copies; ending COPY with
+ENTER does not clear the selection, so the next native command acts on the
+copies. No geometry is computed by the plugin.
 
-### What the host would need (not implemented here)
+Known drawbacks:
 
-Any one of:
+- **Two undo steps** (COPY, then ROTATE/MIRROR). The plugin prints a notice.
+- If the user cancels the second command, the copy stays. Undo once to remove it.
+- The user's selection ends on the copies, not the originals.
+- Not yet verified inside a running OCS 2026.42: PAUSE handover between two
+  chained commands and the selection carry-over.
 
-- a `Copy` option on `ROTATE` (like MIRROR's "Erase source objects?"), which
-  would make `AC_ROTATECOPY` a one-line `ROTATE ... C ...` mapping; or
-- a public `HostApi` method that copies and transforms handles with a
-  serializable transform (translate/rotate/mirror) as one undo step.
+Why options A (atomic) and B were rejected: no public command-chain
+transaction exists, and the public API exposes no entity transform; cloning
+and transforming in the plugin would duplicate host geometry. `ARRAYPOLAR`
+with 2 items was also evaluated for ROTATECOPY: one undo, but its angle is the
+total (user would type 2× the angle) and its Associative toggle can only be
+flipped blindly, so it is rejected as fragile.
 
 ## Other notes
-
-### Requested copy → move → mirror — not implemented
-
-`AC_MIRRORCOPY` retains its working native `MIRROR PAUSE PAUSE N` behavior.
-It does not claim to implement the newly requested copy → move → mirror flow.
-Native COPY/MOVE/MIRROR commit independently, clear selection on completion,
-and `execute_command` returns before the user has supplied points. There is
-no public command-chain transaction or completion callback that makes those
-three interactive commands a reliable single undo with the copies selected.
-Reimplementing entity transformations, polling the host or importing internals
-would violate the plugin constraints. No host changes or workaround were made.
 
 ### Reported mirror prompt — not reproduced or claimed fixed
 

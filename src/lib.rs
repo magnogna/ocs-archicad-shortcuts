@@ -15,7 +15,7 @@ use ocs_plugin_api::ribbon::{CadModule, IconKind, ModuleEvent, RibbonGroup, Ribb
 static MANIFEST: PluginManifest = PluginManifest {
     id: "opencad.archicad_shortcuts",
     name: "Archicad Shortcuts",
-    version: "0.1.0",
+    version: "0.2.0",
     description: "Archicad (Windows) style shortcuts driving native OCS commands.",
     api_version: ApiVersion::CURRENT,
     ribbon_order: 70,
@@ -30,14 +30,21 @@ pub enum Action {
     Native(&'static str),
     /// Start a native command, then accept its default with Enter.
     NativeThenEnter(&'static str),
-    /// Deliberately not implemented; the message explains why.
-    Unsupported(&'static str),
+    /// TEMPORARY chain of native commands (two undo steps). See LIMITATIONS.md.
+    TemporaryChain(&'static str),
 }
 
-pub const ROTATECOPY_UNSUPPORTED: &str = "AC_ROTATECOPY is not available: OCS has no native \
-rotate-a-copy command (ROTATE has no Copy option), and the public plugin API exposes no entity \
-transform, so a correct single-undo copy+rotate cannot be built without host changes. See \
-LIMITATIONS.md.";
+/// TEMPORARY (see LIMITATIONS.md, "Temporary command chains"): OCS has no
+/// native rotate-a-copy. Chain: copy -> move -> rotate. Native COPY places one
+/// copy (the host selects it), then native ROTATE on that selection.
+/// Produces TWO undo steps. Remove once the host offers an atomic copy+transform.
+pub const ROTATECOPY_CHAIN: &str = "COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE";
+/// TEMPORARY: copy -> move -> mirror. Native COPY places one copy (the host
+/// selects it), then native MIRROR erases its source, i.e. mirrors the copy
+/// in place. Originals stay. Produces TWO undo steps.
+pub const MIRRORCOPY_CHAIN: &str = "COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y";
+pub const TEMPORARY_NOTICE: &str = "Temporary implementation: this command creates two undo \
+steps (copy, then transform). Undo twice to revert it completely.";
 
 /// Command table. Pure, so the mapping is unit-tested.
 pub fn action_for(cmd: &str) -> Option<Action> {
@@ -51,13 +58,14 @@ pub fn action_for(cmd: &str) -> Option<Action> {
         "AC_ROTATE" => Action::Native("ROTATE"),
         // Native MIRROR: two axis points, then "Erase source objects?" Yes.
         "AC_MIRROR" => Action::Native("MIRROR PAUSE PAUSE Y"),
-        // Native MIRROR: two axis points, then "Erase source objects?" No.
-        "AC_MIRRORCOPY" => Action::Native("MIRROR PAUSE PAUSE N"),
+        // TEMPORARY: copy -> move -> mirror (two undo steps).
+        "AC_MIRRORCOPY" => Action::TemporaryChain(MIRRORCOPY_CHAIN),
         // Accept GROUP's host-generated name, without naming the group ENTER.
         "AC_GROUP" => Action::NativeThenEnter("GROUP"),
         // UNGROUP dissolves membership; EXPLODE changes entity geometry.
         "AC_UNGROUP" => Action::Native("UNGROUP"),
-        "AC_ROTATECOPY" => Action::Unsupported(ROTATECOPY_UNSUPPORTED),
+        // TEMPORARY: copy -> move -> rotate (two undo steps).
+        "AC_ROTATECOPY" => Action::TemporaryChain(ROTATECOPY_CHAIN),
         _ => return None,
     })
 }
@@ -114,8 +122,7 @@ impl BuiltinPlugin for ArchicadPlugin {
             return false;
         };
         match action {
-            Action::Unsupported(msg) => host.push_error(msg),
-            Action::Native(line) | Action::NativeThenEnter(line) => {
+            Action::Native(line) | Action::NativeThenEnter(line) | Action::TemporaryChain(line) => {
                 // Use the host's current selection; never build our own.
                 if host.selection().is_empty() {
                     host.push_info("Select objects first, then run the command again.");
@@ -130,6 +137,8 @@ impl BuiltinPlugin for ArchicadPlugin {
                     && !host.execute_command("ENTER")
                 {
                     host.push_error("The host could not accept the default group name.");
+                } else if matches!(action, Action::TemporaryChain(_)) {
+                    host.push_info(TEMPORARY_NOTICE);
                 }
             }
         }
@@ -161,11 +170,20 @@ mod tests {
     }
     #[test]
     fn mirrorcopy_keeps_source() {
-        assert_eq!(action_for("AC_MIRRORCOPY"), Some(Action::Native("MIRROR PAUSE PAUSE N")));
+        // copy -> move -> mirror: single native copy, then mirror erasing the
+        // copy's source (the copy itself), never the originals.
+        assert_eq!(
+            action_for("AC_MIRRORCOPY"),
+            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y"))
+        );
     }
     #[test]
-    fn rotatecopy_is_explicitly_unsupported() {
-        assert!(matches!(action_for("AC_ROTATECOPY"), Some(Action::Unsupported(_))));
+    fn rotatecopy_copies_moves_then_rotates_copy() {
+        // copy -> move -> rotate: single native copy, then rotate the selected copy.
+        assert_eq!(
+            action_for("AC_ROTATECOPY"),
+            Some(Action::TemporaryChain("COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE"))
+        );
     }
     #[test]
     fn group_uses_native_group_and_accepts_default_name() {

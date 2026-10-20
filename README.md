@@ -9,9 +9,9 @@ Archicad (Windows) style editing commands to Open CAD Studio, plus a
 | Ctrl+D | `AC_MOVE` | Move selection | `MOVE` |
 | Ctrl+Shift+D | `AC_COPYMOVE` | Original stays, one copy is placed | `COPY PAUSE PAUSE ENTER` |
 | Ctrl+E | `AC_ROTATE` | Rotate selection | `ROTATE` |
-| Ctrl+Shift+E | `AC_ROTATECOPY` | **Not implemented** — see [LIMITATIONS.md](LIMITATIONS.md) | — |
+| Ctrl+Shift+E | `AC_ROTATECOPY` | **Temporary** (2 undo steps): copy → move → rotate, original stays — see [LIMITATIONS.md](LIMITATIONS.md) | `COPY PAUSE PAUSE ENTER ROTATE PAUSE PAUSE` |
 | Ctrl+M | `AC_MIRROR` | Mirror in place | `MIRROR PAUSE PAUSE Y` |
-| Ctrl+Shift+M | `AC_MIRRORCOPY` | Original stays, mirrored copy | `MIRROR PAUSE PAUSE N` |
+| Ctrl+Shift+M | `AC_MIRRORCOPY` | **Temporary** (2 undo steps): copy → move → mirror, original stays | `COPY PAUSE PAUSE ENTER MIRROR PAUSE PAUSE Y` |
 | Ctrl+G | `AC_GROUP` | Group selection using the host-generated name | `GROUP`, then Enter |
 | Ctrl+Shift+G | `AC_UNGROUP` | Dissolve groups containing the selection | `UNGROUP` |
 
@@ -40,17 +40,18 @@ Check Ctrl+M similarly (`SHORTCUTS SET CTRL+M AC_MIRROR`).
 
 Select objects first, then press the shortcut (or use the **Archicad** ribbon
 tab). Points and angles are picked or typed exactly as in the native command;
-undo is the native command's single undo step.
+undo is the native command's single undo step (except the two temporary
+commands below).
 
 Ctrl+M queues **Yes to erase source**, which means **No to retain original**.
 Do not change this answer to `N`: that would create a copy. A visible prompt
 alone is not proof that the queued answer was consumed; the reported need to
 answer manually has not been reproduced inside OCS and is not claimed fixed.
 
-Ctrl+Shift+M still performs native mirror-copy; the newly requested literal
-copy → move → mirror sequence is **not implemented**, because the current
-public API cannot safely chain those interactive operations as one undo step.
-See [LIMITATIONS.md](LIMITATIONS.md).
+Ctrl+Shift+E and Ctrl+Shift+M are **temporary**: copy → move → rotate/mirror via
+two native commands, so they create **two undo steps** (undo twice to revert).
+They will be replaced when the host offers an atomic alternative. See
+[LIMITATIONS.md](LIMITATIONS.md) and [docs/host-proposal.md](docs/host-proposal.md).
 
 Ctrl+Shift+G uses UNGROUP, not geometric EXPLODE: entities stay intact. The host
 dissolves every group containing any selected unlocked member, including
